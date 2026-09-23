@@ -21,6 +21,7 @@
 
 `control_success`(투구 제구 성공 확률)를 예측한 온라인 해커톤입니다. 최종 제출 `submit_v345.zip`은 **Private/Public Score 1182.94969702**, 공식 실행 시간 **130초**를 기록했습니다. 대회 종료 시점에는 Public 점수가 Private 점수로 확정되는 방식이었습니다.
 
+원본 데이터·모델 바이너리·제출 ZIP은 제외하고, 실제 제출에서 사용한 검증 원칙을 담은 공개용 코드와 실행 안내를 정리했습니다. [코드 보기](phase2-online/)
 
 ### 내가 한 일
 
@@ -36,6 +37,46 @@
 - 선수 전이, 압박 상황 workload, Beta-Binomial 확률 보정 등 서로 다른 정보 축을 결합했습니다.
 - 최종 `v345`에서는 특정 Regular 리그·성장 구간·혼합 구종 프로필에 한정한 Beta-Binomial 보정을 10%만 적용해 과도한 보정을 방지했습니다.
 - 21단계 모델 계보와 입력·출력 해시를 남겨, 마지막 `v343 → v345` 구간의 제출 ZIP을 바이트 단위로 재현했습니다.
+
+### 코드 예시 1 — 미래 정보가 섞이지 않는 시즌 검증
+
+검증 연도의 라벨을 학습에 사용하지 않도록 학습·검증 데이터를 명시적으로 나눴습니다.
+
+```python
+train_frame = frame.loc[frame[season_col] < valid_season].copy()
+valid_frame = frame.loc[frame[season_col] == valid_season].copy()
+
+if train_frame.empty or valid_frame.empty:
+    raise ValueError("The selected season split produced an empty train or validation set.")
+```
+
+### 코드 예시 2 — 희소 집단을 위한 Beta-Binomial 평활
+
+데이터가 적은 선수의 단순 성공률이 과도하게 흔들리지 않도록, 관측치와 사전 확률을 결합했습니다. 최종 `v345`에서는 적용 범위를 제한하고 보정 강도도 10%로 고정했습니다.
+
+```python
+def beta_posterior(success: np.ndarray, count: np.ndarray,
+                   prior: np.ndarray, concentration: float) -> np.ndarray:
+    return (success + concentration * prior) / (count + concentration)
+
+beta_delta = 0.10 * (beta_probability - base_probability)
+output[beta_active] = np.clip(
+    output[beta_active] + beta_delta,
+    0.001,
+    0.999,
+)
+```
+
+### 코드 예시 3 — 제출 전 확률 계약 검사
+
+이진 확률 예측 결과가 유한한 값이며 `[0, 1]` 범위를 벗어나지 않는지 자동으로 검사했습니다.
+
+```python
+if not np.isfinite(probabilities).all():
+    raise ValueError("Predicted probabilities contain non-finite values.")
+if not np.all((0.0 <= probabilities) & (probabilities <= 1.0)):
+    raise ValueError("Predicted probabilities must be in [0, 1].")
+```
 
 ### 공개 코드에서 확인할 수 있는 것
 
@@ -99,3 +140,4 @@ Phase 2에서 특정 검증 기간의 점수만 높은 모델은 실제 평가�
 ## 배운 점
 
 성능 개선은 모델을 복잡하게 만드는 것만으로 얻어지지 않았습니다. 시간 누수 없는 검증, 희소 상황에서의 과적합 제어, 제출 환경의 재현성 검증까지 설계해야 실제 성과로 이어진다는 점을 배웠습니다.
+
